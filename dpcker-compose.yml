@@ -1,0 +1,28 @@
+version: "3.9"
+
+services:
+  server:
+    build: ./server
+    container_name: mp3player-server
+    ports:
+      - "8000:8000"
+    volumes:
+      - music_data:/app/music
+      - db_data:/app/db
+    environment:
+      - MUSIC_DIR=/app/music
+      - DB_PATH=/app/db/mp3player.db
+    restart: unless-stopped
+
+  client:
+    build: ./client
+    container_name: mp3player-client
+    ports:
+      - "3000:80"
+    depends_on:
+      - server
+    restart: unless-stopped
+
+volumes:
+  music_data:
+  db_data:
