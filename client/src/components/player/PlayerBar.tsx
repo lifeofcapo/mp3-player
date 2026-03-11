@@ -5,6 +5,9 @@ import {
   Volume2, VolumeX, Shuffle, Repeat, Repeat1,
   Music2
 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Slider } from '@/components/ui/slider'
+import { cn } from '@/lib/utils'
 
 export function PlayerBar() {
   const {
@@ -38,7 +41,7 @@ export function PlayerBar() {
                 <img src={currentTrack.cover_url} alt={currentTrack.title} />
               ) : (
                 <div className="player-cover-placeholder">
-                  <Music2 size={20} />
+                  <Music2 size={18} />
                 </div>
               )}
             </div>
@@ -49,63 +52,60 @@ export function PlayerBar() {
           </>
         ) : (
           <div className="player-empty">
-            <div className="player-cover-placeholder">
-              <Music2 size={20} />
+            <div className="player-cover-placeholder" style={{ width: 44, height: 44, borderRadius: 8, background: 'var(--muted)' }}>
+              <Music2 size={18} />
             </div>
             <div className="player-meta">
-              <span className="player-title" style={{ color: 'var(--text-muted)' }}>Ничего не играет</span>
+              <span className="player-title" style={{ color: 'var(--muted-foreground)' }}>Ничего не играет</span>
             </div>
           </div>
         )}
       </div>
-
       <div className="player-controls">
         <div className="player-buttons">
-          <button
-            className={`icon-btn ${shuffle ? 'active' : ''}`}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className={cn(shuffle && 'text-primary')}
             onClick={toggleShuffle}
             title="Случайный порядок"
           >
-            <Shuffle size={16} />
-          </button>
+            <Shuffle size={15} />
+          </Button>
 
-          <button className="icon-btn" onClick={prevTrack} title="Предыдущий">
-            <SkipBack size={20} />
-          </button>
+          <Button variant="ghost" size="icon-sm" onClick={prevTrack} title="Предыдущий">
+            <SkipBack size={18} />
+          </Button>
 
           <button
             className="play-btn"
             onClick={togglePlay}
             disabled={!currentTrack}
           >
-            {isPlaying ? <Pause size={20} /> : <Play size={20} />}
+            {isPlaying ? <Pause size={18} /> : <Play size={18} />}
           </button>
 
-          <button className="icon-btn" onClick={nextTrack} title="Следующий">
-            <SkipForward size={20} />
-          </button>
+          <Button variant="ghost" size="icon-sm" onClick={nextTrack} title="Следующий">
+            <SkipForward size={18} />
+          </Button>
 
-          <button
-            className={`icon-btn ${repeat !== 'none' ? 'active' : ''}`}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className={cn(repeat !== 'none' && 'text-primary')}
             onClick={cycleRepeat}
             title="Повтор"
           >
-            {repeat === 'one' ? <Repeat1 size={16} /> : <Repeat size={16} />}
-          </button>
+            {repeat === 'one' ? <Repeat1 size={15} /> : <Repeat size={15} />}
+          </Button>
         </div>
 
         <div className="player-progress-row">
           <span className="player-time">{fmt(progress)}</span>
           <div className="player-seekbar" onClick={handleSeek}>
             <div className="player-seekbar-track">
-              <div
-                className="player-seekbar-fill"
-                style={{ width: `${progressPct}%` }}
-              />
-              <div
-                className="player-seekbar-thumb"
-                style={{ left: `${progressPct}%` }}
-              />
+              <div className="player-seekbar-fill" style={{ width: `${progressPct}%` }} />
+              <div className="player-seekbar-thumb" style={{ left: `${progressPct}%` }} />
             </div>
           </div>
           <span className="player-time">{fmt(duration)}</span>
@@ -113,17 +113,21 @@ export function PlayerBar() {
       </div>
 
       <div className="player-volume">
-        <button className="icon-btn" onClick={toggleMute}>
-          {isMuted || volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
-        </button>
-        <div className="volume-slider">
-          <input
-            type="range"
+        <Button variant="ghost" size="icon-sm" onClick={toggleMute}>
+          {isMuted || volume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
+        </Button>
+        <div className="w-20">
+          <Slider
             min={0}
             max={1}
             step={0.01}
-            value={isMuted ? 0 : volume}
-            onChange={e => setVolume(parseFloat(e.target.value))}
+            value={[isMuted ? 0 : volume]}
+            onValueChange={(val) => {
+              // base-ui Slider передаёт number, не number[]
+              const num = Array.isArray(val) ? val[0] : (val as unknown as number)
+              setVolume(num)
+            }}
+            className="cursor-pointer"
           />
         </div>
       </div>

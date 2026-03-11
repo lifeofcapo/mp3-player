@@ -1,12 +1,9 @@
 import { useState } from 'react'
-import {
-  Music2, ListMusic, Plus, Trash2,
-  Sun, Moon, Sparkles, TreePine,
-  Download, ChevronRight
-} from 'lucide-react'
-import { usePlayerStore } from '@/store/playerStore'
-import type { Theme, Playlist } from '@/types'
-import { createPlaylist, deletePlaylist, getPlaylists } from '@/api'
+import { Music2, ListMusic, Plus, Trash2, Download } from 'lucide-react'
+import type { Playlist } from '@/types'
+import { createPlaylist, deletePlaylist } from '@/api'
+import { Input } from '@/components/ui/input'
+import { cn } from '@/lib/utils'
 
 interface SidebarProps {
   playlists: Playlist[]
@@ -16,22 +13,17 @@ interface SidebarProps {
   onShowDownloads: () => void
 }
 
-const themes: { id: Theme; label: string; icon: React.ReactNode }[] = [
-  { id: 'dark', label: 'Dark', icon: <Moon size={14} /> },
-  { id: 'light', label: 'Light', icon: <Sun size={14} /> }
-]
-
 export function Sidebar({ playlists, onPlaylistsChange, onSelectPlaylist, activePlaylistId, onShowDownloads }: SidebarProps) {
-  const { theme, setTheme } = usePlayerStore()
   const [newPlaylistName, setNewPlaylistName] = useState('')
   const [creating, setCreating] = useState(false)
   const [showCreateInput, setShowCreateInput] = useState(false)
 
   const handleCreatePlaylist = async () => {
-    if (!newPlaylistName.trim()) return
+    const name = newPlaylistName.trim()
+    if (!name) return
     setCreating(true)
     try {
-      await createPlaylist(newPlaylistName.trim())
+      await createPlaylist(name)
       setNewPlaylistName('')
       setShowCreateInput(false)
       onPlaylistsChange()
@@ -51,25 +43,23 @@ export function Sidebar({ playlists, onPlaylistsChange, onSelectPlaylist, active
     <aside className="sidebar">
       <div className="sidebar-logo">
         <div className="sidebar-logo-icon">
-          <Music2 size={20} />
+          <Music2 size={18} />
         </div>
         <span className="sidebar-logo-text">Universe<span>Play</span></span>
       </div>
 
       <nav className="sidebar-nav">
         <button
-          className={`sidebar-nav-item ${activePlaylistId === null ? 'active' : ''}`}
+          type="button"
+          className={cn('sidebar-nav-item', activePlaylistId === null ? 'active' : '')}
           onClick={() => onSelectPlaylist(null)}
         >
-          <Music2 size={16} />
+          <Music2 size={15} />
           <span>Все треки</span>
         </button>
 
-        <button
-          className="sidebar-nav-item"
-          onClick={onShowDownloads}
-        >
-          <Download size={16} />
+        <button type="button" className="sidebar-nav-item" onClick={onShowDownloads}>
+          <Download size={15} />
           <span>Загрузки</span>
         </button>
       </nav>
@@ -77,11 +67,12 @@ export function Sidebar({ playlists, onPlaylistsChange, onSelectPlaylist, active
       <div className="sidebar-section">
         <div className="sidebar-section-header">
           <div className="sidebar-section-title">
-            <ListMusic size={14} />
+            <ListMusic size={12} />
             <span>Плейлисты</span>
           </div>
           <button
-            className="sidebar-add-btn"
+            type="button"
+            className="sidebar-add-btn cursor-pointer"
             onClick={() => setShowCreateInput(v => !v)}
             title="Создать плейлист"
           >
@@ -91,63 +82,54 @@ export function Sidebar({ playlists, onPlaylistsChange, onSelectPlaylist, active
 
         {showCreateInput && (
           <div className="sidebar-create-input">
-            <input
+            <Input
               autoFocus
-              type="text"
-              placeholder="Название плейлиста..."
+              className="h-7 text-xs"
+              placeholder="Название плейлиста"
               value={newPlaylistName}
               onChange={e => setNewPlaylistName(e.target.value)}
               onKeyDown={e => {
                 if (e.key === 'Enter') handleCreatePlaylist()
-                if (e.key === 'Escape') setShowCreateInput(false)
+                if (e.key === 'Escape') { setShowCreateInput(false); setNewPlaylistName('') }
               }}
             />
-            <button onClick={handleCreatePlaylist} disabled={creating || !newPlaylistName.trim()}>
-              <ChevronRight size={14} />
+            <button
+              type="button"
+              className="sidebar-create-input-btn"
+              disabled={creating || !newPlaylistName.trim()}
+              onClick={handleCreatePlaylist}
+            >
+              {creating ? '...' : 'OK'}
             </button>
           </div>
         )}
 
-        <div className="sidebar-playlists">
-          {playlists.length === 0 && (
-            <p className="sidebar-empty">Нет плейлистов</p>
-          )}
+        <div className="flex flex-col gap-0.5 mt-1">
           {playlists.map(pl => (
-            <div
+            <button
+              type="button"
               key={pl.id}
-              className={`sidebar-playlist-item ${activePlaylistId === pl.id ? 'active' : ''}`}
+              className={cn('sidebar-playlist-item', activePlaylistId === pl.id ? 'active' : '')}
               onClick={() => onSelectPlaylist(pl.id)}
             >
-              <div className="sidebar-playlist-info">
-                <span className="sidebar-playlist-name">{pl.name}</span>
-                <span className="sidebar-playlist-count">{pl.track_count} треков</span>
-              </div>
+              <span className="sidebar-playlist-name">{pl.name}</span>
+              <span className="sidebar-playlist-count">{pl.track_count}</span>
               <button
-                className="sidebar-playlist-delete"
-                onClick={e => handleDeletePlaylist(e, pl.id)}
-                title="Удалить"
+                type="button"
+                className="sidebar-delete-btn"
+                onClick={(e) => handleDeletePlaylist(e, pl.id)}
+                title="Удалить плейлист"
               >
                 <Trash2 size={12} />
               </button>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="sidebar-themes">
-        <p className="sidebar-themes-label">Тема</p>
-        <div className="sidebar-themes-grid">
-          {themes.map(t => (
-            <button
-              key={t.id}
-              className={`theme-btn theme-btn-${t.id} ${theme === t.id ? 'active' : ''}`}
-              onClick={() => setTheme(t.id)}
-              title={t.label}
-            >
-              {t.icon}
-              <span>{t.label}</span>
             </button>
           ))}
+
+          {playlists.length === 0 && (
+            <p className="text-xs text-muted-foreground px-2 py-3 text-center">
+              Нет плейлистов
+            </p>
+          )}
         </div>
       </div>
     </aside>

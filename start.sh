@@ -16,7 +16,7 @@ if ! command -v docker &> /dev/null; then
 fi
 
 echo " ✅ Docker найден"
-echo " 🚀 Запускаем UniversePlay..."
+echo " 🚀 Запускаем Плеер..."
 echo ""
 
 docker compose up -d
@@ -45,5 +45,5 @@ fi
 echo " Для остановки нажми Ctrl+C"
 echo ""
 
-trap "docker compose down; echo ' ✅ UniversePlay остановлен.'; exit 0" INT
+trap "docker compose down; echo ' ✅ Плеер остановлен.'; exit 0" INT
 while true; do sleep 1; done

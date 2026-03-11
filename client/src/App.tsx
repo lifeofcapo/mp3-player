@@ -7,13 +7,16 @@ import { PlayerBar } from '@/components/player/PlayerBar'
 import { TrackList } from '@/components/tracks/TrackList'
 import { DownloadBar } from '@/components/download/DownloadBar'
 import type { Track, Playlist } from '@/types'
-import { RefreshCw } from 'lucide-react'
+import { RefreshCw, Loader2 } from 'lucide-react'
 import { ThemeProvider } from './components/theme-provider'
+import { ModeToggle } from './components/mode-toggle'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 
 export default function App() {
   useAudio()
 
-  const { theme, activePlaylistId, setActivePlaylist } = usePlayerStore()
+  const { activePlaylistId, setActivePlaylist } = usePlayerStore()
 
   const [tracks, setTracks] = useState<Track[]>([])
   const [playlists, setPlaylists] = useState<Playlist[]>([])
@@ -57,74 +60,80 @@ export default function App() {
 
   return (
     <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
-    <div className={`app-root`}>
-      <Sidebar
-        playlists={playlists}
-        onPlaylistsChange={loadPlaylists}
-        onSelectPlaylist={(id) => {
-          setActivePlaylist(id)
-          setShowDownloads(false)
-        }}
-        activePlaylistId={activePlaylistId}
-        onShowDownloads={() => {
-          setShowDownloads(true)
-          setActivePlaylist(null)
-        }}
-      />
-
-      <main className="main-content">
-        <header className="main-header">
-          <div className="main-header-left">
-            <h1 className="main-title">
-              {showDownloads ? 'Загрузки' :
-               currentPlaylist ? currentPlaylist.name :
-               'Все треки'}
-            </h1>
-            {!showDownloads && (
-              <span className="main-subtitle">
-                {displayedTracks.length} {pluralTracks(displayedTracks.length)}
-              </span>
-            )}
-          </div>
-          <button
-            className="refresh-btn"
-            onClick={loadAll}
-            title="Обновить"
-          >
-            <RefreshCw size={16} />
-          </button>
-        </header>
-
-        <DownloadBar
+      <div className="app-root">
+        <Sidebar
           playlists={playlists}
+          onPlaylistsChange={loadPlaylists}
+          onSelectPlaylist={(id) => {
+            setActivePlaylist(id)
+            setShowDownloads(false)
+          }}
           activePlaylistId={activePlaylistId}
-          onComplete={loadAll}
+          onShowDownloads={() => {
+            setShowDownloads(true)
+            setActivePlaylist(null)
+          }}
         />
 
-        <div className="content-area">
-          {loading ? (
-            <div className="loading-state">
-              <div className="loading-spinner" />
-              <span>Загрузка...</span>
+        <main className="main-content">
+          <header className="main-header">
+            <div className="main-header-left">
+              <h1 className="main-title">
+                {showDownloads ? 'Загрузки' :
+                 currentPlaylist ? currentPlaylist.name :
+                 'Все треки'}
+              </h1>
+              {!showDownloads && (
+                <Badge variant="secondary" className="text-xs font-normal px-2">
+                  {displayedTracks.length} {pluralTracks(displayedTracks.length)}
+                </Badge>
+              )}
             </div>
-          ) : showDownloads ? (
-            <div className="downloads-hint">
-              <p>Вставьте ссылку выше, чтобы начать скачивание.</p>
-              <p>Поддерживаются: <strong>YouTube</strong>, <strong>SoundCloud</strong>, <strong>Spotify</strong>, <strong>VK Music</strong></p>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={loadAll}
+                title="Обновить"
+              >
+                <RefreshCw size={16} />
+              </Button>
+              <ModeToggle />
             </div>
-          ) : (
-            <TrackList
-              tracks={displayedTracks}
-              playlists={playlists}
-              onTracksChange={loadAll}
-              title={currentPlaylist ? currentPlaylist.name : undefined}
-            />
-          )}
-        </div>
-      </main>
+          </header>
 
-      <PlayerBar />
-    </div>
+          <div className="content-area">
+            {showDownloads ? (
+              <>
+                <DownloadBar
+                  playlists={playlists}
+                  activePlaylistId={activePlaylistId}
+                  onComplete={loadAll}
+                />
+                <div className="downloads-hint">
+                  <p>Вставьте ссылку выше, чтобы начать скачивание.</p>
+                  <p>Поддерживаются: <strong>YouTube</strong>, <strong>SoundCloud</strong>, <strong>Spotify</strong>, <strong>VK Music</strong></p>
+                </div>
+              </>
+            ) : loading ? (
+              <div className="loading-state">
+                <Loader2 className="animate-spin" size={24} />
+                <span>Загрузка...</span>
+              </div>
+            ) : (
+              <TrackList
+                tracks={displayedTracks}
+                playlists={playlists}
+                onTracksChange={loadAll}
+                title={currentPlaylist ? currentPlaylist.name : undefined}
+              />
+            )}
+          </div>
+        </main>
+
+        <PlayerBar />
+      </div>
     </ThemeProvider>
   )
 }
