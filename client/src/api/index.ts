@@ -40,3 +40,18 @@ export const removeTrackFromPlaylist = (playlistId: number, trackId: number) =>
 
 export const deletePlaylist = (id: number) =>
   api.delete(`/playlists/${id}`)
+
+// VK Cookies
+export const getVkCookiesStatus = () =>
+  api.get<{ has_cookies: boolean; age_days?: number; warning?: string | null }>('/cookies/vk/status').then(r => r.data)
+
+export const uploadVkCookies = (file: File) => {
+  const form = new FormData()
+  form.append('file', file)
+  return api.post('/cookies/vk', form, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }).then(r => r.data)
+}
+
+export const deleteVkCookies = () =>
+  api.delete('/cookies/vk').then(r => r.data)

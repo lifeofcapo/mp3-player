@@ -2,6 +2,7 @@ import asyncio
 import re
 import uuid
 import subprocess
+import logging
 from pathlib import Path
 import yt_dlp
 from mutagen.mp3 import MP3
@@ -11,16 +12,23 @@ import io
 
 from config import settings
 
+logger = logging.getLogger(__name__)
+
+COOKIES_PATH = Path("./cookies")
+
 
 def detect_source(url: str) -> str:
-    url = url.lower()
-    if "spotify.com" in url:
+    u = url.lower()
+    if "spotify.com" in u:
         return "spotify"
-    elif "soundcloud.com" in url:
+    elif "soundcloud.com" in u:
         return "soundcloud"
-    elif "vk.com" in url or "vkontakte.ru" in url:
+    elif "vk.com" in u or "vkontakte.ru" in u:
+        # vk.com/audio... — не поддерживается yt-dlp
+        if re.search(r'vk\.com/audio', u):
+            return "vk_audio_unsupported"
         return "vk"
-    elif "youtube.com" in url or "youtu.be" in url:
+    elif "youtube.com" in u or "youtu.be" in u:
         return "youtube"
     return "unknown"
 
@@ -28,6 +36,11 @@ def detect_source(url: str) -> str:
 def sanitize_filename(name: str) -> str:
     name = re.sub(r'[<>:"/\\|?*]', '_', name)
     return name[:100].strip()
+
+
+def get_vk_cookies_path() -> Path | None:
+    p = COOKIES_PATH / "vk_cookies.txt"
+    return p if p.exists() else None
 
 
 async def download_track(url: str, source: str, progress_callback=None) -> dict:
@@ -42,6 +55,8 @@ async def _download_ytdlp(url: str, source: str, progress_callback=None) -> dict
     output_template = str(settings.music_path / f"{file_id}.%(ext)s")
     loop = asyncio.get_event_loop()
 
+    yt_errors: list[str] = []
+
     def progress_hook(d):
         if d["status"] == "downloading" and progress_callback:
             total = d.get("total_bytes") or d.get("total_bytes_estimate", 0)
@@ -49,11 +64,22 @@ async def _download_ytdlp(url: str, source: str, progress_callback=None) -> dict
             if total > 0:
                 loop.call_soon_threadsafe(progress_callback, downloaded / total * 90)
 
+    class ErrorCapturingLogger:
+        def debug(self, msg): pass
+        def info(self, msg): pass
+        def warning(self, msg):
+            logger.warning("[yt-dlp] %s", msg)
+            yt_errors.append(msg)
+        def error(self, msg):
+            logger.error("[yt-dlp] %s", msg)
+            yt_errors.append(msg)
+
     opts = {
         "format": "bestaudio/best",
         "outtmpl": output_template,
         "quiet": True,
-        "no_warnings": True,
+        "no_warnings": False,
+        "logger": ErrorCapturingLogger(),
         "progress_hooks": [progress_hook],
         "writethumbnail": True,
         "postprocessors": [
@@ -70,30 +96,58 @@ async def _download_ytdlp(url: str, source: str, progress_callback=None) -> dict
         },
         "fragment_retries": 5,
         "retries": 3,
-        # НЕ используем cookiesfrombrowser — вызывает DPAPI ошибку на Windows
     }
 
     if source == "youtube":
-        # android клиент не требует sign-in проверки
         opts["extractor_args"] = {
             "youtube": {"player_client": ["android", "web_creator"]}
         }
+
+    if source == "vk":
+        cookies_path = get_vk_cookies_path()
+        if cookies_path:
+            opts["cookiefile"] = str(cookies_path)
+        try:
+            opts["impersonate"] = "chrome"
+        except Exception:
+            pass
 
     def _download():
         with yt_dlp.YoutubeDL(opts) as ydl:
             return ydl.extract_info(url, download=True)
 
+    info = None
     try:
         info = await loop.run_in_executor(None, _download)
     except Exception as e:
-        raise RuntimeError(str(e)) from e
+        error_msg = str(e).strip()
+        captured = "\n".join(yt_errors).strip()
+        combined = error_msg or captured or "Не удалось скачать трек"
+        logger.error("yt-dlp exception for %s: %s | captured: %s", url, error_msg, captured)
+
+        if source == "vk":
+            if "badbrowser" in combined.lower():
+                raise RuntimeError(
+                    "VK отклонил запрос. "
+                    "Установи curl_cffi: pip install \"yt-dlp[default,curl-cffi]\""
+                ) from e
+            if any(w in combined.lower() for w in ["login", "sign in", "private", "members only"]):
+                if not get_vk_cookies_path():
+                    raise RuntimeError("VK требует авторизацию. Загрузи cookies.txt в разделе «Загрузки».") from e
+                else:
+                    raise RuntimeError("Куки VK не работают — возможно истекли. Загрузи новые.") from e
+        raise RuntimeError(combined) from e
+
+    if info is None:
+        captured = "\n".join(yt_errors).strip()
+        logger.error("yt-dlp returned None for %s. Errors: %s", url, captured)
+        raise RuntimeError(captured or "Не удалось получить информацию о треке. Проверь ссылку.")
 
     meta = {"title": "Unknown", "artist": "Unknown", "album": "", "duration": 0}
-    if info:
-        meta["title"] = info.get("title") or "Unknown"
-        meta["artist"] = info.get("uploader") or info.get("artist") or "Unknown"
-        meta["album"] = info.get("album") or ""
-        meta["duration"] = float(info.get("duration") or 0)
+    meta["title"] = info.get("title") or "Unknown"
+    meta["artist"] = info.get("uploader") or info.get("artist") or "Unknown"
+    meta["album"] = info.get("album") or ""
+    meta["duration"] = float(info.get("duration") or 0)
 
     mp3_file = settings.music_path / f"{file_id}.mp3"
     if not mp3_file.exists():
@@ -103,7 +157,11 @@ async def _download_ytdlp(url: str, source: str, progress_callback=None) -> dict
                 break
 
     if not mp3_file.exists():
-        raise RuntimeError(f"Файл не найден после скачивания (id={file_id})")
+        captured = "\n".join(yt_errors).strip()
+        raise RuntimeError(
+            "Файл не найден после скачивания. "
+            + (f"Детали: {captured}" if captured else "Возможно yt-dlp не смог скачать этот трек.")
+        )
 
     cover_path = ""
     for ext in (".jpg", ".jpeg", ".png", ".webp"):

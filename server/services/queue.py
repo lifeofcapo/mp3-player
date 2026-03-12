@@ -1,6 +1,9 @@
 import asyncio
+import logging
 from typing import Dict, Optional, Callable
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 
 class DownloadQueue:
@@ -42,8 +45,12 @@ class DownloadQueue:
                 job["progress"] = 100
                 job["track_id"] = result.get("track_id")
             except Exception as e:
+                error_text = str(e).strip()
+                if len(error_text) > 300:
+                    error_text = error_text[:300] + "..."
                 job["status"] = "error"
-                job["error"] = str(e)
+                job["error"] = error_text
+                logger.error("Job %d failed: %s", job_id, error_text)
 
 
 download_queue = DownloadQueue(max_concurrent=2)

@@ -45,7 +45,7 @@ export function Sidebar({ playlists, onPlaylistsChange, onSelectPlaylist, active
         <div className="sidebar-logo-icon">
           <Music2 size={18} />
         </div>
-        <span className="sidebar-logo-text">Universe<span>Play</span></span>
+        <span className="sidebar-logo-text">MP3<span>Player</span></span>
       </div>
 
       <nav className="sidebar-nav">

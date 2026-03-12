@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from models.database import init_db
 from routers import tracks, downloads, playlists
+from routers import cookies
 
 
 @asynccontextmanager
@@ -28,6 +29,7 @@ app.add_middleware(
 app.include_router(tracks.router)
 app.include_router(downloads.router)
 app.include_router(playlists.router)
+app.include_router(cookies.router)
 
 
 @app.get("/health")

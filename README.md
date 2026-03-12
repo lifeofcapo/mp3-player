@@ -2,6 +2,10 @@
 
 Универсальный музыкальный плеер в браузере — объединяет YouTube, SoundCloud, Spotify и VK Music в одном месте. Без VPN. Работает локально.
 
+<p align="center">
+  <img src="client/public/screenshot.png" width="900">
+</p>
+
 ## Возможности
 
 - 🔗 **Вставь ссылку** с YouTube / SoundCloud / Spotify / VK — трек автоматически скачается и добавится в плейлист

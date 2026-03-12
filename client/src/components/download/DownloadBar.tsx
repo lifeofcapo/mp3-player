@@ -5,6 +5,7 @@ import type { Playlist } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import { VkCookiesPanel } from '@/components/download/VkCookiesPanel'
 import {
   Select,
   SelectContent,
@@ -37,6 +38,7 @@ export function DownloadBar({ playlists, activePlaylistId, onComplete }: Downloa
   const [error, setError] = useState('')
 
   const source = detectSource(url)
+  const isVkUrl = source === 'VK'
 
   const handleSubmit = async () => {
     const trimmed = url.trim()
@@ -107,6 +109,9 @@ export function DownloadBar({ playlists, activePlaylistId, onComplete }: Downloa
           <span>{error}</span>
         </div>
       )}
+
+      {/* Панель VK куки — показываем всегда в разделе загрузок */}
+      <VkCookiesPanel />
 
       {jobs.length > 0 && (
         <div className="flex flex-col gap-2 mt-1">

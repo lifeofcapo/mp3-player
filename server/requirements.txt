@@ -13,3 +13,4 @@ alembic==1.13.1
 pydantic==2.7.1
 pydantic-settings==2.2.1
 requests==2.31.0
+curl-cffi>=0.7

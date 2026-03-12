@@ -35,6 +35,15 @@ async def start_download(req: DownloadRequest, db: AsyncSession = Depends(get_db
             detail="Неподдерживаемый источник. Используй ссылки YouTube, SoundCloud, Spotify или VK.",
         )
 
+    if source == "vk_audio_unsupported":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Ссылки vk.com/audio... не поддерживаются — VK закрыл к ним доступ для внешних инструментов. "
+                "Попробуй найти этот трек на YouTube или SoundCloud."
+            ),
+        )
+
     job = DownloadJob(url=url, status="pending")
     db.add(job)
     await db.commit()
@@ -45,7 +54,6 @@ async def start_download(req: DownloadRequest, db: AsyncSession = Depends(get_db
     async def coro_factory(progress_cb):
         meta = await download_track(url, source, progress_cb)
 
-        # Открываем НОВУЮ сессию — request-сессия уже закрыта
         async with AsyncSessionLocal() as session:
             track = Track(
                 title=meta["title"],

@@ -598,6 +598,9 @@ html, body, #root {
 
 .track-info {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
 
 .track-title {
@@ -958,4 +961,106 @@ html, body, #root {
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+.vk-cookies-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--card);
+}
+
+.vk-cookies-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.vk-cookies-toggle:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.vk-cookies-toggle-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.vk-cookies-toggle-text {
+  font-size: 12px;
+}
+
+.vk-cookies-body {
+  padding: 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.vk-cookies-instruction {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vk-cookies-instruction-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.vk-cookies-steps {
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  line-height: 1.5;
+}
+
+.vk-cookies-link {
+  color: var(--primary);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.vk-cookies-link:hover {
+  text-decoration: underline;
+}
+
+.vk-cookies-note {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  padding: 6px 8px;
+  background: color-mix(in oklch, var(--muted) 50%, transparent);
+  border-radius: calc(var(--radius) - 2px);
+}
+
+.vk-cookies-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.vk-cookies-message {
+  font-size: 12px;
+  color: var(--destructive);
+}
+
+.vk-cookies-message.success {
+  color: var(--color-green-500, #22c55e);
 }

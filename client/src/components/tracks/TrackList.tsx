@@ -1,17 +1,9 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Music2, Play, Pause, Trash2, Plus, MoreHorizontal, Check } from 'lucide-react'
 import { usePlayerStore } from '@/store/playerStore'
 import type { Track, Playlist } from '@/types'
 import { deleteTrack, addTrackToPlaylist } from '@/api'
 import { Button } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 
 interface TrackListProps {
@@ -48,12 +40,94 @@ function formatDuration(seconds: number) {
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
+interface TrackMenuProps {
+  track: Track
+  playlists: Playlist[]
+  addedMap: Record<number, number[]>
+  onAddToPlaylist: (track: Track, playlistId: number) => Promise<void>
+  onDelete: (track: Track) => Promise<void>
+}
+
+function TrackMenu({ track, playlists, addedMap, onAddToPlaylist, onDelete }: TrackMenuProps) {
+  const [open, setOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [open])
+
+  return (
+    <div className="track-menu-wrap" ref={menuRef}>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        aria-label="Действия с треком"
+        onClick={(e) => {
+          e.stopPropagation()
+          setOpen(v => !v)
+        }}
+      >
+        <MoreHorizontal size={14} />
+      </Button>
+
+      {open && (
+        <div className="track-menu" onClick={e => e.stopPropagation()}>
+          <div className="track-menu-header">Добавить в плейлист</div>
+          <div className="track-menu-divider" />
+
+          {playlists.length === 0 && (
+            <div className="track-menu-empty">Нет плейлистов</div>
+          )}
+
+          {playlists.map(pl => {
+            const alreadyAdded = (addedMap[track.id] ?? []).includes(pl.id)
+            return (
+              <button
+                key={pl.id}
+                className="track-menu-item"
+                disabled={alreadyAdded}
+                onClick={async () => {
+                  await onAddToPlaylist(track, pl.id)
+                  setOpen(false)
+                }}
+              >
+                {alreadyAdded ? <Check size={12} /> : <Plus size={12} />}
+                {pl.name}
+              </button>
+            )
+          })}
+
+          <div className="track-menu-divider" />
+
+          <button
+            className="track-menu-item"
+            style={{ color: 'var(--destructive)' }}
+            onClick={async () => {
+              await onDelete(track)
+              setOpen(false)
+            }}
+          >
+            <Trash2 size={12} />
+            Удалить трек
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function TrackList({ tracks, playlists, onTracksChange }: TrackListProps) {
   const { currentTrack, isPlaying, playTrack, togglePlay } = usePlayerStore()
   const [addedMap, setAddedMap] = useState<Record<number, number[]>>({})
 
-  const handleDelete = async (e: React.MouseEvent, track: Track) => {
-    e.stopPropagation()
+  const handleDelete = async (track: Track) => {
     await deleteTrack(track.id)
     onTracksChange()
   }
@@ -107,16 +181,19 @@ export function TrackList({ tracks, playlists, onTracksChange }: TrackListProps)
                 }
               </span>
             </div>
+
             <div className="track-cover">
               {track.cover_url
                 ? <img src={track.cover_url} alt={track.title} />
                 : <Music2 size={16} className="text-muted-foreground" />
               }
             </div>
+
             <div className="track-info">
               <span className="track-title">{track.title}</span>
               <span className="track-artist">{track.artist}</span>
             </div>
+
             <span
               className="track-source"
               style={{ background: `${sourceColor(track.source_type)}22`, color: sourceColor(track.source_type) }}
@@ -127,41 +204,13 @@ export function TrackList({ tracks, playlists, onTracksChange }: TrackListProps)
             <span className="track-duration">{formatDuration(track.duration)}</span>
 
             <div className="track-actions" onClick={e => e.stopPropagation()}>
-              <DropdownMenu>
-                <DropdownMenuTrigger>
-                  <Button variant="ghost" size="icon-xs">
-                    <MoreHorizontal size={14} />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuLabel>Добавить в плейлист</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  {playlists.length === 0 && (
-                    <DropdownMenuItem disabled>Нет плейлистов</DropdownMenuItem>
-                  )}
-                  {playlists.map(pl => {
-                    const alreadyAdded = (addedMap[track.id] ?? []).includes(pl.id)
-                    return (
-                      <DropdownMenuItem
-                        key={pl.id}
-                        disabled={alreadyAdded}
-                        onClick={() => handleAddToPlaylist(track, pl.id)}
-                      >
-                        {alreadyAdded ? <Check size={12} /> : <Plus size={12} />}
-                        {pl.name}
-                      </DropdownMenuItem>
-                    )
-                  })}
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    className="text-destructive focus:text-destructive"
-                    onClick={(e) => handleDelete(e, track)}
-                  >
-                    <Trash2 size={12} />
-                    Удалить трек
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <TrackMenu
+                track={track}
+                playlists={playlists}
+                addedMap={addedMap}
+                onAddToPlaylist={handleAddToPlaylist}
+                onDelete={handleDelete}
+              />
             </div>
           </div>
         )
