@@ -20,6 +20,7 @@ export default defineConfig({
       '/downloads': 'http://localhost:8000',
       '/playlists': 'http://localhost:8000',
       '/cookies': 'http://localhost:8000',
+      '/vk': 'http://localhost:8000',
       '/health': 'http://localhost:8000',
     },
   },

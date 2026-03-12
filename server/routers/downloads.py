@@ -7,7 +7,6 @@ from models.database import get_db, Track, DownloadJob, PlaylistTrack, AsyncSess
 from services.downloader import detect_source, download_track
 from services.queue import download_queue
 
-
 router = APIRouter(prefix="/downloads", tags=["downloads"])
 
 
@@ -33,15 +32,6 @@ async def start_download(req: DownloadRequest, db: AsyncSession = Depends(get_db
         raise HTTPException(
             status_code=400,
             detail="Неподдерживаемый источник. Используй ссылки YouTube, SoundCloud, Spotify или VK.",
-        )
-
-    if source == "vk_audio_unsupported":
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Ссылки vk.com/audio... не поддерживаются — VK закрыл к ним доступ для внешних инструментов. "
-                "Попробуй найти этот трек на YouTube или SoundCloud."
-            ),
         )
 
     job = DownloadJob(url=url, status="pending")

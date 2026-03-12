@@ -41,7 +41,7 @@ export const removeTrackFromPlaylist = (playlistId: number, trackId: number) =>
 export const deletePlaylist = (id: number) =>
   api.delete(`/playlists/${id}`)
 
-// VK Cookies
+// VK Cookies (оставляем для совместимости)
 export const getVkCookiesStatus = () =>
   api.get<{ has_cookies: boolean; age_days?: number; warning?: string | null }>('/cookies/vk/status').then(r => r.data)
 
@@ -55,3 +55,22 @@ export const uploadVkCookies = (file: File) => {
 
 export const deleteVkCookies = () =>
   api.delete('/cookies/vk').then(r => r.data)
+
+// VK Auth
+export interface VkStatus {
+  authenticated: boolean
+  login?: string
+  user_id?: number
+}
+
+export const getVkStatus = () =>
+  api.get<VkStatus>('/vk/status').then(r => r.data)
+
+export const vkLogin = (login: string, password: string) =>
+  api.post<{ status: 'ok' | '2fa_required' }>('/vk/login', { login, password }).then(r => r.data)
+
+export const vkLogin2fa = (code: string) =>
+  api.post<{ status: 'ok' }>('/vk/login/2fa', { code }).then(r => r.data)
+
+export const vkLogout = () =>
+  api.delete('/vk/logout').then(r => r.data)

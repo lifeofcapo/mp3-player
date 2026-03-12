@@ -5,7 +5,7 @@ import type { Playlist } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { VkCookiesPanel } from '@/components/download/VkCookiesPanel'
+import { VkAuthPanel } from '@/components/download/VkAuthPanel'
 import {
   Select,
   SelectContent,
@@ -38,7 +38,6 @@ export function DownloadBar({ playlists, activePlaylistId, onComplete }: Downloa
   const [error, setError] = useState('')
 
   const source = detectSource(url)
-  const isVkUrl = source === 'VK'
 
   const handleSubmit = async () => {
     const trimmed = url.trim()
@@ -49,7 +48,8 @@ export function DownloadBar({ playlists, activePlaylistId, onComplete }: Downloa
       await download(trimmed, playlistId)
       setUrl('')
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'Ошибка при отправке'
+      const axiosError = e as { response?: { data?: { detail?: string } }; message?: string }
+      const msg = axiosError.response?.data?.detail ?? axiosError.message ?? 'Ошибка при отправке'
       setError(msg)
     }
   }
@@ -110,8 +110,7 @@ export function DownloadBar({ playlists, activePlaylistId, onComplete }: Downloa
         </div>
       )}
 
-      {/* Панель VK куки — показываем всегда в разделе загрузок */}
-      <VkCookiesPanel />
+      <VkAuthPanel />
 
       {jobs.length > 0 && (
         <div className="flex flex-col gap-2 mt-1">

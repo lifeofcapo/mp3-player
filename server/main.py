@@ -3,8 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from models.database import init_db
-from routers import tracks, downloads, playlists
-from routers import cookies
+from routers import tracks, downloads, playlists, cookies
+from routers import vk
 
 
 @asynccontextmanager
@@ -13,11 +13,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(
-    title="Mp3Player API",
-    version="1.0.0",
-    lifespan=lifespan,
-)
+app = FastAPI(title="Mp3Player API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,6 +26,7 @@ app.include_router(tracks.router)
 app.include_router(downloads.router)
 app.include_router(playlists.router)
 app.include_router(cookies.router)
+app.include_router(vk.router)
 
 
 @app.get("/health")

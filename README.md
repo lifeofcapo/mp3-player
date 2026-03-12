@@ -3,7 +3,7 @@
 Универсальный музыкальный плеер в браузере — объединяет YouTube, SoundCloud, Spotify и VK Music в одном месте. Без VPN. Работает локально.
 
 <p align="center">
-  <img src="client/public/screenshot.png" width="900">
+  <img src="https://raw.githubusercontent.com/lifeofcapo/mp3-player/main/client/public/screenshot.png" width="900">
 </p>
 
 ## Возможности

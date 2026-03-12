@@ -3,6 +3,7 @@ import re
 import uuid
 import subprocess
 import logging
+import requests
 from pathlib import Path
 import yt_dlp
 from mutagen.mp3 import MP3
@@ -24,10 +25,9 @@ def detect_source(url: str) -> str:
     elif "soundcloud.com" in u:
         return "soundcloud"
     elif "vk.com" in u or "vkontakte.ru" in u:
-        # vk.com/audio... — не поддерживается yt-dlp
-        if re.search(r'vk\.com/audio', u):
-            return "vk_audio_unsupported"
-        return "vk"
+        if re.search(r'vk\.com/(audio|music/audio)', u):
+            return "vk_audio"
+        return "vk_video"
     elif "youtube.com" in u or "youtu.be" in u:
         return "youtube"
     return "unknown"
@@ -43,12 +43,188 @@ def get_vk_cookies_path() -> Path | None:
     return p if p.exists() else None
 
 
+def _parse_vk_audio_id(url: str):
+    """
+    Парсит owner_id и audio_id из ссылок вида:
+      vk.com/audio-12345_67890
+      vk.com/audio?id=67890&owner_id=-12345
+      vk.com/music/audio/-12345_67890
+    Возвращает (owner_id: int, audio_id: int) или бросает ValueError.
+    """
+    # Формат: /audio{owner_id}_{audio_id} или /audio-{owner_id}_{audio_id}
+    m = re.search(r'/audio(-?\d+)_(\d+)', url)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+
+    # Формат: /music/audio/{owner_id}_{audio_id}
+    m = re.search(r'/music/audio/(-?\d+)_(\d+)', url)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+
+    # Query params: ?id=...&owner_id=...
+    m_id = re.search(r'[?&]id=(\d+)', url)
+    m_owner = re.search(r'[?&]owner_id=(-?\d+)', url)
+    if m_id and m_owner:
+        return int(m_owner.group(1)), int(m_id.group(1))
+
+    raise ValueError(f"Не удалось распознать формат VK аудио ссылки: {url}")
+
+
 async def download_track(url: str, source: str, progress_callback=None) -> dict:
     if source == "spotify":
         return await _download_spotify(url, progress_callback)
+    elif source == "vk_audio":
+        return await _download_vk_audio(url, progress_callback)
     else:
         return await _download_ytdlp(url, source, progress_callback)
 
+
+# ---------------------------------------------------------------------------
+# VK Audio через VK API
+# ---------------------------------------------------------------------------
+
+async def _download_vk_audio(url: str, progress_callback=None) -> dict:
+    from services.vk_auth import resolve_audio_url
+
+    loop = asyncio.get_event_loop()
+
+    if progress_callback:
+        loop.call_soon_threadsafe(progress_callback, 5)
+
+    # Парсим ID
+    try:
+        owner_id, audio_id = _parse_vk_audio_id(url)
+    except ValueError as e:
+        raise RuntimeError(str(e)) from e
+
+    # Получаем прямую ссылку через API (синхронно в executor)
+    direct_url = await loop.run_in_executor(
+        None, lambda: resolve_audio_url(owner_id, audio_id)
+    )
+
+    if progress_callback:
+        loop.call_soon_threadsafe(progress_callback, 15)
+
+    file_id = str(uuid.uuid4())
+
+    # Определяем формат: m3u8 (HLS) или прямой mp3
+    is_hls = "m3u8" in direct_url.lower() or direct_url.endswith(".m3u8")
+
+    if is_hls:
+        meta = await _download_hls(direct_url, file_id, progress_callback)
+    else:
+        meta = await _download_direct_mp3(direct_url, file_id, progress_callback)
+
+    meta["source_type"] = "vk"
+    meta["source_url"] = url
+
+    # Попробуем вытащить метаданные из ID3 если есть
+    mp3_path = Path(meta["file_path"])
+    if mp3_path.exists():
+        id3_meta = await loop.run_in_executor(None, lambda: _extract_metadata_from_mp3(mp3_path))
+        if id3_meta.get("title") and id3_meta["title"] != mp3_path.stem:
+            meta["title"] = id3_meta["title"]
+        if id3_meta.get("artist") and id3_meta["artist"] != "Unknown":
+            meta["artist"] = id3_meta["artist"]
+        if id3_meta.get("cover_path"):
+            meta["cover_path"] = id3_meta["cover_path"]
+
+    return meta
+
+
+async def _download_direct_mp3(direct_url: str, file_id: str, progress_callback=None) -> dict:
+    """Скачивает прямой mp3 файл через requests с прогрессом."""
+    loop = asyncio.get_event_loop()
+    mp3_path = settings.music_path / f"{file_id}.mp3"
+
+    def _fetch():
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            )
+        }
+        resp = requests.get(direct_url, headers=headers, stream=True, timeout=60)
+        resp.raise_for_status()
+
+        total = int(resp.headers.get("content-length", 0))
+        downloaded = 0
+        with open(mp3_path, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=65536):
+                if chunk:
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total > 0 and progress_callback:
+                        pct = 15 + (downloaded / total) * 80
+                        loop.call_soon_threadsafe(progress_callback, round(pct, 1))
+
+    await loop.run_in_executor(None, _fetch)
+
+    if not mp3_path.exists():
+        raise RuntimeError("Файл не был скачан.")
+
+    if progress_callback:
+        loop.call_soon_threadsafe(progress_callback, 95)
+
+    return {
+        "title": "Unknown",
+        "artist": "Unknown",
+        "album": "",
+        "duration": 0.0,
+        "file_path": str(mp3_path),
+        "cover_path": "",
+    }
+
+
+async def _download_hls(hls_url: str, file_id: str, progress_callback=None) -> dict:
+    """Скачивает HLS поток через ffmpeg."""
+    loop = asyncio.get_event_loop()
+    mp3_path = settings.music_path / f"{file_id}.mp3"
+
+    def _fetch():
+        import subprocess
+        result = subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-i", hls_url,
+                "-vn",
+                "-acodec", "libmp3lame",
+                "-ab", "192k",
+                str(mp3_path),
+            ],
+            capture_output=True,
+            timeout=300,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"ffmpeg ошибка: {result.stderr.decode('utf-8', errors='replace')[-300:]}"
+            )
+
+    if progress_callback:
+        loop.call_soon_threadsafe(progress_callback, 20)
+
+    await loop.run_in_executor(None, _fetch)
+
+    if not mp3_path.exists():
+        raise RuntimeError("HLS поток не был конвертирован.")
+
+    if progress_callback:
+        loop.call_soon_threadsafe(progress_callback, 95)
+
+    return {
+        "title": "Unknown",
+        "artist": "Unknown",
+        "album": "",
+        "duration": 0.0,
+        "file_path": str(mp3_path),
+        "cover_path": "",
+    }
+
+
+# ---------------------------------------------------------------------------
+# yt-dlp (YouTube, SoundCloud, VK видео)
+# ---------------------------------------------------------------------------
 
 async def _download_ytdlp(url: str, source: str, progress_callback=None) -> dict:
     file_id = str(uuid.uuid4())
@@ -103,7 +279,7 @@ async def _download_ytdlp(url: str, source: str, progress_callback=None) -> dict
             "youtube": {"player_client": ["android", "web_creator"]}
         }
 
-    if source == "vk":
+    if source == "vk_video":
         cookies_path = get_vk_cookies_path()
         if cookies_path:
             opts["cookiefile"] = str(cookies_path)
@@ -123,31 +299,19 @@ async def _download_ytdlp(url: str, source: str, progress_callback=None) -> dict
         error_msg = str(e).strip()
         captured = "\n".join(yt_errors).strip()
         combined = error_msg or captured or "Не удалось скачать трек"
-        logger.error("yt-dlp exception for %s: %s | captured: %s", url, error_msg, captured)
-
-        if source == "vk":
-            if "badbrowser" in combined.lower():
-                raise RuntimeError(
-                    "VK отклонил запрос. "
-                    "Установи curl_cffi: pip install \"yt-dlp[default,curl-cffi]\""
-                ) from e
-            if any(w in combined.lower() for w in ["login", "sign in", "private", "members only"]):
-                if not get_vk_cookies_path():
-                    raise RuntimeError("VK требует авторизацию. Загрузи cookies.txt в разделе «Загрузки».") from e
-                else:
-                    raise RuntimeError("Куки VK не работают — возможно истекли. Загрузи новые.") from e
+        logger.error("yt-dlp exception for %s: %s", url, combined)
         raise RuntimeError(combined) from e
 
     if info is None:
         captured = "\n".join(yt_errors).strip()
-        logger.error("yt-dlp returned None for %s. Errors: %s", url, captured)
         raise RuntimeError(captured or "Не удалось получить информацию о треке. Проверь ссылку.")
 
-    meta = {"title": "Unknown", "artist": "Unknown", "album": "", "duration": 0}
-    meta["title"] = info.get("title") or "Unknown"
-    meta["artist"] = info.get("uploader") or info.get("artist") or "Unknown"
-    meta["album"] = info.get("album") or ""
-    meta["duration"] = float(info.get("duration") or 0)
+    meta = {
+        "title": info.get("title") or "Unknown",
+        "artist": info.get("uploader") or info.get("artist") or "Unknown",
+        "album": info.get("album") or "",
+        "duration": float(info.get("duration") or 0),
+    }
 
     mp3_file = settings.music_path / f"{file_id}.mp3"
     if not mp3_file.exists():
@@ -160,7 +324,7 @@ async def _download_ytdlp(url: str, source: str, progress_callback=None) -> dict
         captured = "\n".join(yt_errors).strip()
         raise RuntimeError(
             "Файл не найден после скачивания. "
-            + (f"Детали: {captured}" if captured else "Возможно yt-dlp не смог скачать этот трек.")
+            + (f"Детали: {captured}" if captured else "")
         )
 
     cover_path = ""
@@ -180,13 +344,17 @@ async def _download_ytdlp(url: str, source: str, progress_callback=None) -> dict
 
     meta["file_path"] = str(mp3_file)
     meta["cover_path"] = cover_path
-    meta["source_type"] = source
+    meta["source_type"] = source.replace("_video", "")
 
     if progress_callback:
         loop.call_soon_threadsafe(progress_callback, 100)
 
     return meta
 
+
+# ---------------------------------------------------------------------------
+# Spotify
+# ---------------------------------------------------------------------------
 
 async def _download_spotify(url: str, progress_callback=None) -> dict:
     output_dir = str(settings.music_path)
@@ -216,7 +384,9 @@ async def _download_spotify(url: str, progress_callback=None) -> dict:
     if not new_files:
         all_mp3 = sorted(settings.music_path.glob("*.mp3"), key=lambda f: f.stat().st_mtime, reverse=True)
         if not all_mp3:
-            raise RuntimeError(f"spotdl не скачал файл.\nstdout: {result.stdout[-500:]}\nstderr: {result.stderr[-500:]}")
+            raise RuntimeError(
+                f"spotdl не скачал файл.\nstdout: {result.stdout[-500:]}\nstderr: {result.stderr[-500:]}"
+            )
         new_files = [all_mp3[0]]
 
     latest = new_files[0]
@@ -230,15 +400,22 @@ async def _download_spotify(url: str, progress_callback=None) -> dict:
     return meta
 
 
+# ---------------------------------------------------------------------------
+# Утилиты
+# ---------------------------------------------------------------------------
+
 def _extract_metadata_from_mp3(path: Path) -> dict:
-    meta = {"title": path.stem, "artist": "Unknown", "album": "", "duration": 0, "cover_path": ""}
+    meta = {"title": path.stem, "artist": "Unknown", "album": "", "duration": 0.0, "cover_path": ""}
     try:
         audio = MP3(str(path))
         meta["duration"] = audio.info.length
         tags = ID3(str(path))
-        if "TIT2" in tags: meta["title"] = str(tags["TIT2"])
-        if "TPE1" in tags: meta["artist"] = str(tags["TPE1"])
-        if "TALB" in tags: meta["album"] = str(tags["TALB"])
+        if "TIT2" in tags:
+            meta["title"] = str(tags["TIT2"])
+        if "TPE1" in tags:
+            meta["artist"] = str(tags["TPE1"])
+        if "TALB" in tags:
+            meta["album"] = str(tags["TALB"])
         for key in tags:
             if key.startswith("APIC"):
                 cover_data = tags[key].data
