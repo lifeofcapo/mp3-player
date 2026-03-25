@@ -19,10 +19,6 @@ logger = logging.getLogger(__name__)
 
 SESSION_PATH = Path("./cookies/vk_session.json")
 
-# ---------------------------------------------------------------------------
-# Хранение сессии
-# ---------------------------------------------------------------------------
-
 def _save_session(token: str, user_id: int, login: str) -> None:
     SESSION_PATH.parent.mkdir(parents=True, exist_ok=True)
     SESSION_PATH.write_text(
@@ -55,20 +51,14 @@ def get_session_status() -> dict:
         "user_id": s.get("user_id"),
     }
 
-
-# ---------------------------------------------------------------------------
-# Состояние текущей авторизации (один пользователь одновременно)
-# ---------------------------------------------------------------------------
-
 class _AuthState:
     def __init__(self):
         self.reset()
 
     def reset(self):
-        # Event: основной поток auth() ждёт, пока пользователь введёт код
-        self.code_event = threading.Event()
-        # Event: сигнализирует что auth() завершился (успешно или с ошибкой)
-        self.done_event = threading.Event()
+        self.code_event = threading.Event() # Event: основной поток auth() ждёт, пока пользователь введёт код
+        self.done_event = threading.Event() # Event: сигнализирует что auth() полностью завершился 
+        self.twofa_event = threading.Event()  # Event: сигнализирует login_step1 что нужна 2FA 
         self.code: Optional[str] = None
         self.error: Optional[str] = None
         self.token: Optional[str] = None
@@ -79,11 +69,6 @@ class _AuthState:
 
 _state = _AuthState()
 _state_lock = threading.Lock()
-
-
-# ---------------------------------------------------------------------------
-# Авторизация
-# ---------------------------------------------------------------------------
 
 def login_step1(login: str, password: str) -> dict:
     """
@@ -101,17 +86,14 @@ def login_step1(login: str, password: str) -> dict:
         """Вызывается vk_api когда нужен 2FA код. Блокирует поток авторизации."""
         with _state_lock:
             _state.needs_2fa = True
-            _state.done_event.set()   # сообщаем step1 что нужна 2FA
+
+        _state.twofa_event.set()
 
         logger.info("VK 2FA required, waiting for code...")
-        # Ждём пока пользователь введёт код (таймаут 5 минут)
         got_code = _state.code_event.wait(timeout=300)
         if not got_code or not _state.code:
             raise RuntimeError("Таймаут ввода кода двухфакторной аутентификации.")
-        return _state.code, True  # (code, remember)
-
-    def remember_handler():
-        return True
+        return _state.code, True  
 
     def _run_auth():
         try:
@@ -122,7 +104,7 @@ def login_step1(login: str, password: str) -> dict:
                 scope="audio,offline",
                 auth_handler=auth_handler,
             )
-            vk.auth(reauth=True)
+            vk.auth()
             token = vk.token["access_token"]
             user_info = vk.method("users.get")[0]
             user_id = user_info["id"]
@@ -130,46 +112,37 @@ def login_step1(login: str, password: str) -> dict:
             with _state_lock:
                 _state.token = token
                 _state.user_id = user_id
-                if not _state.needs_2fa:
-                    # Авторизация прошла без 2FA — сразу сигналим
-                    _state.done_event.set()
 
         except BadPassword:
             with _state_lock:
                 _state.error = "Неверный логин или пароль"
-                _state.done_event.set()
         except Captcha:
             with _state_lock:
                 _state.error = "VK требует капчу. Попробуй позже."
-                _state.done_event.set()
         except Exception as e:
             err = str(e)
             logger.error("VK auth thread error: %s", err)
             with _state_lock:
                 _state.error = err
-                _state.done_event.set()
+        finally:
+            _state.done_event.set()
 
-    # Запускаем авторизацию в отдельном потоке
     t = threading.Thread(target=_run_auth, daemon=True)
     t.start()
 
-    # Ждём первого события: либо успех/ошибка, либо запрос 2FA
-    # Таймаут 30 секунд на подключение к VK
-    got_event = _state.done_event.wait(timeout=30)
+    finished = _state.done_event.wait(timeout=30)
+    needs_2fa = _state.twofa_event.is_set()
 
-    if not got_event:
+    if needs_2fa:
+        return {"status": "2fa_required"}
+
+    if not finished:
         return {"status": "error", "message": "Таймаут подключения к VK. Проверь интернет."}
 
     with _state_lock:
         if _state.error:
             return {"status": "error", "message": _state.error}
 
-        if _state.needs_2fa:
-            # Сбрасываем done_event — он понадобится снова после ввода кода
-            _state.done_event.clear()
-            return {"status": "2fa_required"}
-
-        # Авторизация без 2FA — сохраняем сессию
         if _state.token:
             _save_session(_state.token, _state.user_id, login)
             logger.info("VK auth OK (no 2FA): user_id=%s", _state.user_id)
@@ -187,10 +160,8 @@ def login_step2(code: str) -> dict:
             return {"status": "error", "message": "Нет активной сессии 2FA. Начни авторизацию заново."}
         _state.code = code
 
-    # Разблокируем поток авторизации
     _state.code_event.set()
 
-    # Ждём завершения авторизации (таймаут 30 секунд)
     got_event = _state.done_event.wait(timeout=30)
 
     if not got_event:
@@ -210,11 +181,6 @@ def login_step2(code: str) -> dict:
             return {"status": "ok"}
 
     return {"status": "error", "message": "Неизвестная ошибка после ввода кода."}
-
-
-# ---------------------------------------------------------------------------
-# Получение прямой ссылки на аудио
-# ---------------------------------------------------------------------------
 
 def _get_vk_api_instance() -> vk_api.VkApi:
     s = _load_session()

@@ -51,17 +51,14 @@ def _parse_vk_audio_id(url: str):
       vk.com/music/audio/-12345_67890
     Возвращает (owner_id: int, audio_id: int) или бросает ValueError.
     """
-    # Формат: /audio{owner_id}_{audio_id} или /audio-{owner_id}_{audio_id}
     m = re.search(r'/audio(-?\d+)_(\d+)', url)
     if m:
         return int(m.group(1)), int(m.group(2))
 
-    # Формат: /music/audio/{owner_id}_{audio_id}
     m = re.search(r'/music/audio/(-?\d+)_(\d+)', url)
     if m:
         return int(m.group(1)), int(m.group(2))
 
-    # Query params: ?id=...&owner_id=...
     m_id = re.search(r'[?&]id=(\d+)', url)
     m_owner = re.search(r'[?&]owner_id=(-?\d+)', url)
     if m_id and m_owner:
@@ -91,13 +88,11 @@ async def _download_vk_audio(url: str, progress_callback=None) -> dict:
     if progress_callback:
         loop.call_soon_threadsafe(progress_callback, 5)
 
-    # Парсим ID
     try:
         owner_id, audio_id = _parse_vk_audio_id(url)
     except ValueError as e:
         raise RuntimeError(str(e)) from e
 
-    # Получаем прямую ссылку через API (синхронно в executor)
     direct_url = await loop.run_in_executor(
         None, lambda: resolve_audio_url(owner_id, audio_id)
     )
@@ -106,8 +101,6 @@ async def _download_vk_audio(url: str, progress_callback=None) -> dict:
         loop.call_soon_threadsafe(progress_callback, 15)
 
     file_id = str(uuid.uuid4())
-
-    # Определяем формат: m3u8 (HLS) или прямой mp3
     is_hls = "m3u8" in direct_url.lower() or direct_url.endswith(".m3u8")
 
     if is_hls:
@@ -118,7 +111,6 @@ async def _download_vk_audio(url: str, progress_callback=None) -> dict:
     meta["source_type"] = "vk"
     meta["source_url"] = url
 
-    # Попробуем вытащить метаданные из ID3 если есть
     mp3_path = Path(meta["file_path"])
     if mp3_path.exists():
         id3_meta = await loop.run_in_executor(None, lambda: _extract_metadata_from_mp3(mp3_path))
@@ -183,7 +175,6 @@ async def _download_hls(hls_url: str, file_id: str, progress_callback=None) -> d
     mp3_path = settings.music_path / f"{file_id}.mp3"
 
     def _fetch():
-        import subprocess
         result = subprocess.run(
             [
                 "ffmpeg", "-y",
@@ -353,51 +344,248 @@ async def _download_ytdlp(url: str, source: str, progress_callback=None) -> dict
 
 
 # ---------------------------------------------------------------------------
-# Spotify
+# Spotify → метаданные со страницы → поиск на YouTube → yt-dlp
 # ---------------------------------------------------------------------------
 
-async def _download_spotify(url: str, progress_callback=None) -> dict:
-    output_dir = str(settings.music_path)
-    loop = asyncio.get_event_loop()
-    before = set(settings.music_path.glob("*.mp3"))
+def _fetch_spotify_meta(spotify_url: str) -> dict:
+    """
+    Получает название и артиста со страницы Spotify.
+    Spotify отдаёт полный SSR-HTML (с og-тегами) только ботам —
+    используем User-Agent Twitterbot/Telegrambot чтобы получить нужный ответ.
+    """
+    # Spotify отдаёт SSR с og:title/og:description для известных краулеров
+    bot_user_agents = [
+        "TelegramBot (like TwitterBot)",
+        "Twitterbot/1.0",
+        "facebookexternalhit/1.1",
+        "LinkedInBot/1.0 (compatible; Jakarta Commons-HttpClient/3.1 +http://www.linkedin.com)",
+    ]
 
-    if progress_callback:
-        loop.call_soon_threadsafe(progress_callback, 10)
+    html = None
+    last_error = None
 
-    def _run_spotdl():
-        return subprocess.run(
-            ["spotdl", "download", url, "--output", output_dir, "--format", "mp3", "--bitrate", "192k"],
-            capture_output=True, text=True, timeout=300, encoding="utf-8", errors="replace",
+    for ua in bot_user_agents:
+        try:
+            resp = requests.get(
+                spotify_url,
+                headers={
+                    "User-Agent": ua,
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.9",
+                },
+                timeout=15,
+                allow_redirects=True,
+            )
+            resp.raise_for_status()
+            body = resp.text
+            # Проверяем что получили SSR — должны быть og-теги
+            if 'property="og:title"' in body or "property='og:title'" in body:
+                html = body
+                logger.info("Spotify SSR получен через User-Agent: %s", ua)
+                break
+        except Exception as e:
+            last_error = e
+            continue
+
+    if html is None:
+        raise RuntimeError(
+            f"Spotify не вернул метаданные страницы. Последняя ошибка: {last_error}"
         )
 
-    try:
-        result = await asyncio.wait_for(loop.run_in_executor(None, _run_spotdl), timeout=290)
-    except asyncio.TimeoutError:
-        raise RuntimeError("spotdl: превышено время ожидания")
+    # Парсим og:title — может быть в двух форматах атрибутов
+    title_match = (
+        re.search(r'property="og:title"\s+content="([^"]+)"', html)
+        or re.search(r'content="([^"]+)"\s+property="og:title"', html)
+        or re.search(r"property='og:title'\s+content='([^']+)'", html)
+        or re.search(r"content='([^']+)'\s+property='og:title'", html)
+    )
+    desc_match = (
+        re.search(r'property="og:description"\s+content="([^"]+)"', html)
+        or re.search(r'content="([^"]+)"\s+property="og:description"', html)
+        or re.search(r"property='og:description'\s+content='([^']+)'", html)
+        or re.search(r"content='([^']+)'\s+property='og:description'", html)
+    )
+
+    raw_title = title_match.group(1) if title_match else ""
+    raw_desc  = desc_match.group(1)  if desc_match  else ""
+
+    logger.info("Spotify og:title raw=%r", raw_title)
+    logger.info("Spotify og:description raw=%r", raw_desc)
+
+    # og:title у треков: "Название · Song · Артист | Spotify"
+    # или просто "Название | Spotify"
+    clean_title = re.sub(r'\s*\|\s*Spotify.*$', '', raw_title, flags=re.IGNORECASE).strip()
+    clean_title = re.sub(r'\s*-\s*song by .+$', '', clean_title, flags=re.IGNORECASE).strip()
+
+    artist = "Unknown"
+
+    if " · " in raw_title:
+        parts = [p.strip() for p in raw_title.split(" · ")]
+        # Структура: "Название · Song · Артист | Spotify"
+        clean_title = parts[0]
+        last = re.sub(r'\s*\|.*$', '', parts[-1]).strip()
+        if last and last.lower() not in ("song", "album", "single", "playlist", "spotify"):
+            artist = last
+
+    # Из og:description: "Listen to Название by Артист on Spotify."
+    if artist == "Unknown" and raw_desc:
+        m = re.search(r'Listen to .+? by ([^.]+?)(?:\s+on Spotify|\.)', raw_desc, re.IGNORECASE)
+        if m:
+            artist = m.group(1).strip()
+
+    if not clean_title:
+        raise RuntimeError(
+            "Не удалось получить название трека. "
+            f"og:title={raw_title!r}, og:description={raw_desc!r}"
+        )
+
+    logger.info("Spotify meta итог: title=%r, artist=%r", clean_title, artist)
+    return {"title": clean_title, "artist": artist, "album": ""}
+
+
+async def _download_spotify(url: str, progress_callback=None) -> dict:
+    """
+    Скачивает Spotify трек без Spotify API:
+    1. Парсим название и артиста со страницы Spotify (SSR для ботов)
+    2. Ищем на YouTube через ytsearch: и скачиваем через yt-dlp
+    """
+    loop = asyncio.get_event_loop()
 
     if progress_callback:
-        loop.call_soon_threadsafe(progress_callback, 90)
+        loop.call_soon_threadsafe(progress_callback, 5)
 
-    after = set(settings.music_path.glob("*.mp3"))
-    new_files = sorted(after - before, key=lambda f: f.stat().st_mtime, reverse=True)
+    spotify_meta = await loop.run_in_executor(None, lambda: _fetch_spotify_meta(url))
+    title  = spotify_meta["title"]
+    artist = spotify_meta["artist"]
 
-    if not new_files:
-        all_mp3 = sorted(settings.music_path.glob("*.mp3"), key=lambda f: f.stat().st_mtime, reverse=True)
-        if not all_mp3:
-            raise RuntimeError(
-                f"spotdl не скачал файл.\nstdout: {result.stdout[-500:]}\nstderr: {result.stderr[-500:]}"
-            )
-        new_files = [all_mp3[0]]
+    if progress_callback:
+        loop.call_soon_threadsafe(progress_callback, 15)
 
-    latest = new_files[0]
-    meta = _extract_metadata_from_mp3(latest)
-    meta["file_path"] = str(latest)
-    meta["source_type"] = "spotify"
+    if artist and artist != "Unknown":
+        search_query = f"{artist} - {title}"
+    else:
+        search_query = title
+
+    logger.info("Spotify: ищем на YouTube: %r", search_query)
+
+    yt_url = f"ytsearch1:{search_query}"
+    file_id = str(uuid.uuid4())
+    output_template = str(settings.music_path / f"{file_id}.%(ext)s")
+    yt_errors: list[str] = []
+
+    def progress_hook(d):
+        if d["status"] == "downloading" and progress_callback:
+            total = d.get("total_bytes") or d.get("total_bytes_estimate", 0)
+            downloaded = d.get("downloaded_bytes", 0)
+            if total > 0:
+                pct = 20 + (downloaded / total) * 70
+                loop.call_soon_threadsafe(progress_callback, round(pct, 1))
+
+    class ErrorCapturingLogger:
+        def debug(self, msg): pass
+        def info(self, msg): pass
+        def warning(self, msg):
+            logger.warning("[yt-dlp/spotify] %s", msg)
+            yt_errors.append(msg)
+        def error(self, msg):
+            logger.error("[yt-dlp/spotify] %s", msg)
+            yt_errors.append(msg)
+
+    opts = {
+        "format": "bestaudio/best",
+        "outtmpl": output_template,
+        "quiet": True,
+        "no_warnings": False,
+        "logger": ErrorCapturingLogger(),
+        "progress_hooks": [progress_hook],
+        "writethumbnail": True,
+        "postprocessors": [
+            {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"},
+            {"key": "FFmpegThumbnailsConvertor", "format": "jpg"},
+        ],
+        "http_headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+        "extractor_args": {
+            "youtube": {"player_client": ["android", "web_creator"]}
+        },
+        "fragment_retries": 5,
+        "retries": 3,
+        "playlist_items": "1",
+    }
+
+    def _download():
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            return ydl.extract_info(yt_url, download=True)
+
+    try:
+        info = await loop.run_in_executor(None, _download)
+    except Exception as e:
+        error_msg = str(e).strip()
+        captured = "\n".join(yt_errors).strip()
+        combined = error_msg or captured or "Не удалось найти трек на YouTube"
+        logger.error("yt-dlp spotify search error: %s", combined)
+        raise RuntimeError(f"Не удалось скачать «{search_query}»: {combined}") from e
+
+    if info is None:
+        raise RuntimeError(f"YouTube не вернул результатов для: «{search_query}»")
+
+    # ytsearch возвращает псевдо-плейлист из 1 трека
+    if info.get("_type") == "playlist":
+        entries = info.get("entries") or []
+        if not entries:
+            raise RuntimeError(f"YouTube не нашёл трек: «{search_query}»")
+        info = entries[0]
+
+    if progress_callback:
+        loop.call_soon_threadsafe(progress_callback, 92)
+
+    mp3_file = settings.music_path / f"{file_id}.mp3"
+    if not mp3_file.exists():
+        for f in settings.music_path.glob(f"{file_id}.*"):
+            if f.suffix in (".mp3", ".m4a", ".opus", ".webm"):
+                mp3_file = f
+                break
+
+    if not mp3_file.exists():
+        captured = "\n".join(yt_errors).strip()
+        raise RuntimeError(
+            f"Файл не найден после скачивания «{search_query}». "
+            + (f"Детали: {captured}" if captured else "")
+        )
+
+    cover_path = ""
+    for ext in (".jpg", ".jpeg", ".png", ".webp"):
+        thumb = settings.music_path / f"{file_id}{ext}"
+        if thumb.exists():
+            cover_path = str(thumb)
+            break
+
+    if cover_path:
+        try:
+            img = Image.open(cover_path)
+            img.thumbnail((500, 500))
+            img.save(cover_path, "JPEG", quality=85)
+        except Exception:
+            pass
 
     if progress_callback:
         loop.call_soon_threadsafe(progress_callback, 100)
 
-    return meta
+    return {
+        "title": title,
+        "artist": artist,
+        "album": spotify_meta.get("album", ""),
+        "duration": float(info.get("duration") or 0),
+        "file_path": str(mp3_file),
+        "cover_path": cover_path,
+        "source_type": "spotify",
+    }
 
 
 # ---------------------------------------------------------------------------
